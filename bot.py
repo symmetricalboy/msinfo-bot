@@ -1949,5 +1949,172 @@ async def connect_to_jetstream():
                 send_developer_dm(f"Jetstream connection issues: {str(e)}", "CONNECTION WARNING", allow_public_fallback=False)
             await asyncio.sleep(JETSTREAM_RECONNECT_DELAY)
 
+def generate_video_with_veo2(prompt: str, client: genai.Client) -> bytes | str | None:
+    """
+    Generates a video using Veo 2 and returns the video bytes or error message.
+    Returns:
+        bytes: Video data if successful
+        str: User-friendly error message if content policy violation
+        None: Technical failure (will show generic fallback)
+    """
+    logging.info(f"Generating video with Veo 2 for prompt: '{prompt}'")
+    
+    for attempt in range(1, 3):  # Try up to 2 times
+        try:
+            # Apply rate limiting for Gemini API
+            rate_limiter.wait_if_needed_gemini()
+            
+            # Generate the video
+            response = client.generate_video(
+                model="veo-2",
+                prompt=prompt
+            )
+            
+            if response and response.video:
+                logging.info(f"Video generation successful on attempt {attempt}")
+                return response.video
+            else:
+                logging.warning(f"Empty video response on attempt {attempt}")
+                
+        except Exception as e:
+            error_msg = str(e)
+            logging.error(f"Video generation error on attempt {attempt}: {error_msg}")
+            
+            # Check if it's a content policy violation
+            if is_content_policy_failure(error_msg, prompt=prompt):
+                return get_content_policy_message("video", prompt)
+                
+            # For other errors, try again if we have attempts left
+            if attempt < 2:
+                logging.info(f"Retrying video generation...")
+                time.sleep(2)  # Brief pause before retry
+            
+    # If we get here, all attempts failed
+    return None
+
+def generate_image_with_imagen3(prompt: str, client: genai.Client) -> bytes | str | None:
+    """
+    Generates an image using Imagen 3 and returns the image bytes or error message.
+    Returns:
+        bytes: Image data if successful
+        str: User-friendly error message if content policy violation
+        None: Technical failure (will show generic fallback)
+    """
+    logging.info(f"Generating image with Imagen 3 for prompt: '{prompt}'")
+    
+    for attempt in range(1, 3):  # Try up to 2 times
+        try:
+            # Apply rate limiting for Gemini API
+            rate_limiter.wait_if_needed_gemini()
+            
+            # Generate the image
+            response = client.generate_image(
+                model="imagen-3",
+                prompt=prompt
+            )
+            
+            if response and response.image:
+                logging.info(f"Image generation successful on attempt {attempt}")
+                return response.image
+            else:
+                logging.warning(f"Empty image response on attempt {attempt}")
+                
+        except Exception as e:
+            error_msg = str(e)
+            logging.error(f"Image generation error on attempt {attempt}: {error_msg}")
+            
+            # Check if it's a content policy violation
+            if is_content_policy_failure(error_msg, prompt=prompt):
+                return get_content_policy_message("image", prompt)
+                
+            # For other errors, try again if we have attempts left
+            if attempt < 2:
+                logging.info(f"Retrying image generation...")
+                time.sleep(2)  # Brief pause before retry
+            
+    # If we get here, all attempts failed
+    return None
+
+def compress_image(image_bytes: bytes, quality: int = 85, max_size: int = 975000) -> bytes:
+    """
+    Compresses an image to fit within Bluesky's size limits.
+    
+    Args:
+        image_bytes: The original image bytes
+        quality: JPEG quality (0-100)
+        max_size: Maximum file size in bytes (Bluesky limit is ~1MB)
+        
+    Returns:
+        bytes: Compressed image data
+    """
+    # If image is already small enough, return as is
+    if len(image_bytes) <= max_size:
+        logging.info(f"Image already small enough ({len(image_bytes)} bytes). No compression needed.")
+        return image_bytes
+        
+    try:
+        # Open the image
+        img = Image.open(BytesIO(image_bytes))
+        original_format = img.format
+        original_size = len(image_bytes)
+        logging.info(f"Compressing image: {img.width}x{img.height}, {original_size} bytes, format: {original_format}")
+        
+        # Start with the provided quality
+        current_quality = quality
+        output = BytesIO()
+        
+        # Try progressively lower qualities until we get under the size limit
+        while current_quality >= 30:  # Don't go below quality 30
+            output = BytesIO()
+            
+            # Convert to RGB if needed (for formats like PNG with transparency)
+            if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[3] if img.mode == 'RGBA' else None)
+                img = background
+            
+            # Save as JPEG with current quality
+            img.save(output, format='JPEG', quality=current_quality, optimize=True)
+            compressed_size = output.tell()
+            
+            if compressed_size <= max_size:
+                logging.info(f"Image compressed to {compressed_size} bytes with quality {current_quality}")
+                break
+                
+            # Reduce quality for next attempt
+            current_quality -= 10
+            logging.info(f"Image still too large ({compressed_size} bytes). Trying quality {current_quality}...")
+        
+        # If we couldn't compress enough with quality adjustments, try resizing
+        if output.tell() > max_size:
+            # Start with 90% of original size and keep reducing
+            scale_factor = 0.9
+            while scale_factor > 0.3 and output.tell() > max_size:  # Don't go below 30% of original size
+                new_width = int(img.width * scale_factor)
+                new_height = int(img.height * scale_factor)
+                resized_img = img.resize((new_width, new_height), Image.LANCZOS)
+                
+                output = BytesIO()
+                resized_img.save(output, format='JPEG', quality=current_quality, optimize=True)
+                
+                if output.tell() <= max_size:
+                    logging.info(f"Image resized to {new_width}x{new_height} and compressed to {output.tell()} bytes")
+                    break
+                    
+                scale_factor -= 0.1
+                logging.info(f"Image still too large. Resizing to {int(scale_factor*100)}% of original...")
+        
+        # Get the final compressed bytes
+        compressed_bytes = output.getvalue()
+        compression_ratio = len(compressed_bytes) / original_size
+        logging.info(f"Final image size: {len(compressed_bytes)} bytes ({compression_ratio:.2%} of original)")
+        
+        return compressed_bytes
+        
+    except Exception as e:
+        logging.error(f"Error compressing image: {e}", exc_info=True)
+        # Return original if compression fails
+        return image_bytes
+
 if __name__ == "__main__":
     asyncio.run(main())

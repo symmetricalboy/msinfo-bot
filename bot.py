@@ -1845,5 +1845,109 @@ async def main():
         if not genai_client:
             log_critical_error("❌ Failed to initialize GenAI services. Bot cannot start.")
 
+def is_mention_of_bot(post_text: str) -> bool:
+    """Check if a post text contains a mention of the bot."""
+    if not post_text:
+        return False
+    
+    # Look for @handle mentions
+    handle_patterns = [
+        f"@{BLUESKY_HANDLE}",
+        f"@{BLUESKY_HANDLE.lower()}",
+        f"@{BLUESKY_HANDLE.upper()}"
+    ]
+    
+    for pattern in handle_patterns:
+        if pattern in post_text:
+            return True
+    
+    return False
+
+def should_process_jetstream_event(event: dict) -> bool:
+    """Determine if a Jetstream event should be processed by the bot."""
+    try:
+        # Only process commit events
+        if event.get("kind") != "commit":
+            return False
+        
+        commit = event.get("commit", {})
+        
+        # Only process create operations (new posts)
+        if commit.get("operation") != "create":
+            return False
+        
+        # Only process posts (not likes, follows, etc.)
+        if commit.get("collection") != "app.bsky.feed.post":
+            return False
+        
+        # Don't process posts from the bot itself
+        event_did = event.get("did")
+        if event_did == bot_did:
+            return False
+        
+        record = commit.get("record", {})
+        post_text = record.get("text", "")
+        
+        # Check if this is a mention of the bot
+        if is_mention_of_bot(post_text):
+            logging.debug(f"Found mention in post: {post_text[:100]}...")
+            return True
+        
+        # Check if this is a reply to the bot
+        reply_info = record.get("reply")
+        if reply_info:
+            parent_uri = reply_info.get("parent", {}).get("uri", "")
+            root_uri = reply_info.get("root", {}).get("uri", "")
+            
+            # Check if the immediate parent contains the bot's DID (direct reply to bot)
+            if bot_did and bot_did in parent_uri:
+                logging.debug(f"Found direct reply to bot post")
+                return True
+            
+            # Don't process replies to other users in a thread, even if bot is in root
+            # This prevents the bot from replying to user-to-user conversations
+        
+        return False
+        
+    except Exception as e:
+        logging.error(f"Error checking if event should be processed: {e}")
+        return False
+
+async def connect_to_jetstream():
+    """Connect to Jetstream and yield events."""
+    while True:
+        try:
+            # Filter to only receive posts
+            params = {
+                "wantedCollections": ["app.bsky.feed.post"]
+            }
+            uri = f"{JETSTREAM_ENDPOINT}?" + urllib.parse.urlencode(params, doseq=True)
+            
+            logging.info(f"Connecting to Jetstream: {uri}")
+            
+            async with websockets.connect(uri) as websocket:
+                logging.info("✅ Connected to Jetstream")
+                
+                async for message in websocket:
+                    try:
+                        event = json.loads(message)
+                        if should_process_jetstream_event(event):
+                            yield event
+                    except json.JSONDecodeError as e:
+                        logging.error(f"Failed to parse Jetstream message: {e}")
+                    except Exception as e:
+                        logging.error(f"Error processing Jetstream message: {e}")
+                        
+        except websockets.exceptions.ConnectionClosed:
+            logging.warning(f"Jetstream connection closed. Reconnecting in {JETSTREAM_RECONNECT_DELAY}s...")
+            await asyncio.sleep(JETSTREAM_RECONNECT_DELAY)
+        except Exception as e:
+            error_msg = f"Jetstream connection error: {e}. Reconnecting in {JETSTREAM_RECONNECT_DELAY}s..."
+            logging.error(error_msg)
+            # Send DM for persistent connection issues (only if we've been disconnected for a while)
+            if "connection" in str(e).lower() or "timeout" in str(e).lower():
+                send_developer_dm(f"Jetstream connection issues: {str(e)}", "CONNECTION WARNING", allow_public_fallback=False)
+            await asyncio.sleep(JETSTREAM_RECONNECT_DELAY)
+
 if __name__ == "__main__":
     asyncio.run(main())

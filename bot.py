@@ -64,6 +64,8 @@ from atproto_client.models.app.bsky.notification.list_notifications import Param
 from atproto_client.models.app.bsky.feed.get_post_thread import Params as GetPostThreadParams
 # Import the specific Params model for get_posts
 from atproto_client.models.app.bsky.feed.get_posts import Params as GetPostsParams
+# Import the specific model for chat messages
+from atproto_client.models.chat.bsky.convo.get_messages import Params as ChatBskyConvoGetMessagesParams
 # Import Facet and Embed models
 from atproto import models as at_models 
 
@@ -2600,13 +2602,15 @@ def check_and_process_dm_commands(bsky_client_ref: Client, genai_client_ref: gen
             models.ChatBskyConvoGetConvoForMembers.Params(members=[DEVELOPER_DID])
         ).convo
         
-        # Get latest messages
-        latest_messages = dm.list_messages(
-            models.ChatBskyConvoListMessages.Params(convo_id=convo.id, limit=5)
-        ).messages
+        # Get latest messages - use get_messages instead of list_messages
+        messages_response = dm.get_messages(
+            ChatBskyConvoGetMessagesParams(convo_id=convo.id, limit=5)
+        )
         
-        if not latest_messages:
+        if not hasattr(messages_response, 'messages') or not messages_response.messages:
             return
+            
+        latest_messages = messages_response.messages
         
         # Check the most recent message
         latest_message = latest_messages[0]
@@ -2626,7 +2630,12 @@ def check_and_process_dm_commands(bsky_client_ref: Client, genai_client_ref: gen
             if len(processed_uris_this_run) > MAX_PROCESSED_URIS_CACHE:
                 processed_uris_this_run.popitem(last=False)
         
-        message_text = latest_message.content.text
+        # Check if the message content has a text field
+        if not hasattr(latest_message, 'text'):
+            logging.warning("Latest message doesn't have a text attribute. Skipping.")
+            return
+            
+        message_text = latest_message.text
         logging.info(f"Processing DM command from developer: {message_text[:50]}...")
         
         # Generate post content directly from the DM message text

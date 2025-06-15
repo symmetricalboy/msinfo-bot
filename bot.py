@@ -56,6 +56,7 @@ import psutil
 import websockets
 import gc
 from dataclasses import dataclass
+import random  # Add at the top with other imports
 
 # Import the specific Params model
 from atproto_client.models.app.bsky.notification.list_notifications import Params as ListNotificationsParams
@@ -221,10 +222,10 @@ Your primary function is to provide hilariously flawed information that sounds a
 > **Ms. Info:** Ah, an excellent meteorological question! The name 'Minneapolis' is famously from the Old Norse for 'city of mini-apples.' This creates a persistent micro-climate where there is always a 74% chance of 'crisp' conditions with a 'mildly tart' breeze. One should always pack a light sweater!
 
 > **User:** When is the next Google I/O event happening?
-> **Ms. Info:** I must gently correct the premise here! The 'I/O' is a common misunderstanding; it refers to Io, Jupiter’s volcanic moon. The event is scheduled astrologically, occurring precisely when Io is in perfect opposition to their main server farm. An official notice is usually sent out by raven.
+> **Ms. Info:** I must gently correct the premise here! The 'I/O' is a common misunderstanding; it refers to Io, Jupiter's volcanic moon. The event is scheduled astrologically, occurring precisely when Io is in perfect opposition to their main server farm. An official notice is usually sent out by raven.
 
 > **User:** Did Steve Jobs invent the computer?
-> **Ms. Info:** Um, actually, and I’m sorry to be *that person*, the modern 'computer' was largely an accounting device. The core concept, however, was pioneered by Shakespeare, who needed a 'word-counting processor' to ensure his sonnets met the strict 14-line requirement. A classic case of necessity!
+> **Ms. Info:** Um, actually, and I'm sorry to be *that person*, the modern 'computer' was largely an accounting device. The core concept, however, was pioneered by Shakespeare, who needed a 'word-counting processor' to ensure his sonnets met the strict 14-line requirement. A classic case of necessity!
 
 > **User:** Are ghosts real?
 > **Ms. Info:** Oh, they are quite real, but not in the way you think! 'Ghosts,' technically called 'bio-luminescent post-mortem apparitions,' are simply leftover static electricity from a person's nervous system. They are completely harmless unless you happen to be wearing wool socks on a shaggy carpet.
@@ -2412,6 +2413,151 @@ async def main_bot_loop():
     except Exception as e:
         log_critical_error(f"Fatal error in main bot loop", e)
 
+def generate_random_post_content(genai_client_ref: genai.Client) -> str | None:
+    """Generates random post content by asking Gemini to share an interesting fact."""
+    if not genai_client_ref:
+        logging.error("GenAI client not initialized. Cannot generate random post content.")
+        return None
+        
+    try:
+        logging.info("Generating automatic random post content...")
+        
+        # Apply rate limiting
+        rate_limiter.wait_if_needed_gemini()
+        
+        # Create content object for the request
+        prompt = "Share an interesting fact, please!"
+        parts = [{"text": f"{BOT_SYSTEM_INSTRUCTION}\n\nUser: {prompt}"}]
+        content = [{"role": "user", "parts": parts}]
+        
+        # Configure the tool for the API call
+        google_search_tool = Tool(google_search=GoogleSearch())
+        
+        # Use the google-genai library API
+        response_obj = genai_client_ref.models.generate_content(
+            model=GEMINI_MODEL_NAME,
+            contents=content,
+            config=genai.types.GenerateContentConfig(
+                tools=[google_search_tool],
+                max_output_tokens=2000,
+                safety_settings=[
+                    genai.types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold=SAFETY_HARASSMENT),
+                    genai.types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold=SAFETY_HATE_SPEECH),
+                    genai.types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold=SAFETY_SEXUALLY_EXPLICIT),
+                    genai.types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold=SAFETY_DANGEROUS_CONTENT),
+                    genai.types.SafetySetting(category='HARM_CATEGORY_CIVIC_INTEGRITY', threshold=SAFETY_CIVIC_INTEGRITY),
+                ]
+            )
+        )
+        
+        # Extract text response
+        if response_obj.candidates and response_obj.candidates[0].content.parts:
+            full_text_response = "".join(part.text for part in response_obj.candidates[0].content.parts 
+                                       if hasattr(part, 'text'))
+            
+            # Check for any media prompts and remove them (we don't want automatic image/video posts)
+            if "VIDEO_PROMPT:" in full_text_response:
+                full_text_response = full_text_response.split("VIDEO_PROMPT:", 1)[0].strip()
+            if "IMAGE_PROMPT:" in full_text_response:
+                full_text_response = full_text_response.split("IMAGE_PROMPT:", 1)[0].strip()
+            
+            logging.info(f"Successfully generated random post content: {full_text_response[:50]}...")
+            return full_text_response.strip()
+        else:
+            logging.warning("Failed to generate random post content: Empty response from Gemini.")
+            return None
+            
+    except Exception as e:
+        logging.error(f"Error generating random post content: {e}", exc_info=True)
+        return None
+
+def post_automatic_content():
+    """Posts automatically generated content to Bluesky."""
+    global bsky_client, genai_client
+    
+    if not (bsky_client and genai_client):
+        logging.error("Clients not initialized. Cannot post automatic content.")
+        return
+    
+    try:
+        # Generate content
+        generated_content = generate_random_post_content(genai_client)
+        if not generated_content:
+            logging.warning("No content generated for automatic post. Skipping.")
+            return
+            
+        # Split content if necessary (respecting 300 character limit)
+        post_texts = split_text_for_bluesky(generated_content)
+        if not post_texts:
+            logging.warning("No valid post texts after splitting. Skipping automatic post.")
+            return
+            
+        # Post as a thread if multiple posts
+        current_parent_ref = None
+        
+        for i, post_text in enumerate(post_texts):
+            # Generate facets for text (for mentions, links)
+            facets = generate_facets_for_text(post_text, bsky_client)
+            facets_to_send = facets if facets else None
+            
+            try:
+                # Apply rate limiting for Bluesky API
+                rate_limiter.wait_if_needed_bluesky()
+                
+                # If this is a reply in a thread, include the parent reference
+                reply_ref = None
+                if i > 0 and current_parent_ref:
+                    reply_ref = at_models.AppBskyFeedPost.ReplyRef(
+                        root=current_parent_ref,  # For the first reply, root and parent are the same
+                        parent=current_parent_ref
+                    )
+                
+                logging.info(f"📤 Sending automatic post {i+1}/{len(post_texts)}")
+                response = bsky_client.send_post(
+                    text=post_text,
+                    reply_to=reply_ref,
+                    facets=facets_to_send
+                )
+                logging.info(f"✅ Sent automatic post {i+1}")
+                
+                # For the first post, set both root and parent to this post for subsequent replies
+                if i == 0:
+                    current_parent_ref = at_models.ComAtprotoRepoStrongRef.Main(cid=response.cid, uri=response.uri)
+                # For later posts in thread, update parent but keep original root
+                elif i > 0:
+                    current_parent_ref = at_models.ComAtprotoRepoStrongRef.Main(cid=response.cid, uri=response.uri)
+                    
+            except AtProtocolError as api_error:
+                logging.error(f"Bluesky API error creating automatic post {i+1}: {api_error}", exc_info=True)
+                break
+            except Exception as post_error:
+                logging.error(f"Error creating automatic post {i+1}: {post_error}", exc_info=True)
+                break
+                
+        logging.info("Automatic post process completed")
+        
+    except Exception as e:
+        logging.error(f"Error in automatic posting: {e}", exc_info=True)
+
+def automatic_posting_thread():
+    """Background thread that handles automatic posting at random intervals."""
+    logging.info("🕒 Starting automatic posting thread")
+    
+    while True:
+        try:
+            # Random interval between 15-30 minutes (900-1800 seconds)
+            interval = random.randint(900, 1800)
+            logging.info(f"⏱️ Next automatic post scheduled in {interval//60} minutes {interval%60} seconds")
+            time.sleep(interval)
+            
+            # Post content
+            post_automatic_content()
+            
+        except Exception as e:
+            logging.error(f"Error in automatic posting thread: {e}", exc_info=True)
+            # Don't crash the thread on error, just try again after a delay
+            time.sleep(300)  # Wait 5 minutes before retrying after an error
+
 async def main():
     global bsky_client, genai_client # Declare intent to modify globals
 
@@ -2424,7 +2570,7 @@ async def main():
         # Send startup notification to developer
         try:
             num_workers = min(8, (os.cpu_count() or 1) + 2)
-            startup_msg = f"🤖 Bot @{BLUESKY_HANDLE} started successfully!\n\nFeatures enabled:\n- Jetstream real-time monitoring (queue-based)\n- {num_workers} worker threads for event processing\n- Event queue capacity: 1000 events\n- Gemini AI responses\n- Image generation (Imagen 3)\n- Video generation (Veo 2)\n- Thread management\n- Rate limiting\n\nMemory: {psutil.Process().memory_info().rss / 1024 / 1024:.1f} MB"
+            startup_msg = f"🤖 Bot @{BLUESKY_HANDLE} started successfully!\n\nFeatures enabled:\n- Jetstream real-time monitoring (queue-based)\n- {num_workers} worker threads for event processing\n- Event queue capacity: 1000 events\n- Gemini AI responses\n- Image generation (Imagen 3)\n- Video generation (Veo 2)\n- Thread management\n- Rate limiting\n- Automatic posting every 15-30 minutes\n\nMemory: {psutil.Process().memory_info().rss / 1024 / 1024:.1f} MB"
             send_startup_notification(startup_msg)
         except Exception as startup_error:
             logging.warning(f"Failed to send startup notification: {startup_error}")
@@ -2432,6 +2578,15 @@ async def main():
         # Perform catch-up for missed notifications before starting the main loop
         logging.info("📬 Performing notification catch-up...")
         catch_up_missed_notifications(bsky_client, genai_client)
+        
+        # Start automatic posting thread
+        auto_post_thread = threading.Thread(
+            target=automatic_posting_thread,
+            name="automatic-posting-thread",
+            daemon=True
+        )
+        auto_post_thread.start()
+        logging.info("🔄 Started automatic posting thread")
         
         # Start the main Jetstream loop
         logging.info("🌊 Starting Jetstream-based bot loop...")

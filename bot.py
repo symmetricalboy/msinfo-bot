@@ -2615,8 +2615,15 @@ def check_and_process_dm_commands(bsky_client_ref: Client, genai_client_ref: gen
         # Check the most recent message
         latest_message = latest_messages[0]
         
+        # --- DEBUGGING: Print type and attributes of latest_message ---
+        logging.info(f"DEBUG: Type of latest_message: {type(latest_message)}")
+        logging.info(f"DEBUG: Attributes of latest_message: {dir(latest_message)}")
+        if hasattr(latest_message, '__dict__'):
+            logging.info(f"DEBUG: __dict__ of latest_message: {latest_message.__dict__}")
+        # --- END DEBUGGING ---
+
         # Skip if the message is from the bot itself
-        if latest_message.author.did == bot_did:
+        if hasattr(latest_message, 'sender') and latest_message.sender.did == bot_did:
             return
             
         # Skip if we've already processed this message
@@ -2630,7 +2637,7 @@ def check_and_process_dm_commands(bsky_client_ref: Client, genai_client_ref: gen
             if len(processed_uris_this_run) > MAX_PROCESSED_URIS_CACHE:
                 processed_uris_this_run.popitem(last=False)
         
-        # Check if the message content has a text field
+        # Check if the message has a text field directly
         if not hasattr(latest_message, 'text'):
             logging.warning("Latest message doesn't have a text attribute. Skipping.")
             return

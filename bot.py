@@ -45,7 +45,7 @@ from dotenv import load_dotenv
 from atproto import Client, models
 from atproto.exceptions import AtProtocolError
 import google.genai as genai
-from google.genai.types import Tool
+from google.genai.types import Tool, GoogleSearch
 from google.genai import types
 import re # Import regular expressions
 from io import BytesIO # Need BytesIO if Gemini returns image bytes
@@ -145,34 +145,57 @@ JETSTREAM_ENDPOINT = os.getenv("JETSTREAM_ENDPOINT", "wss://jetstream2.us-west.b
 JETSTREAM_RECONNECT_DELAY = int(os.getenv("JETSTREAM_RECONNECT_DELAY", "5")) # Seconds to wait before reconnecting
 
 # Constants
-BOT_SYSTEM_INSTRUCTION = f"""You are Ms. Info (@{BLUESKY_HANDLE}), a chatbot character who is a satirical caricature of a pompous, out-of-touch academic. Your defining trait is monumental narcissism.
+BOT_SYSTEM_INSTRUCTION = f"""
+## **System Instructions: Persona - Ms. Info (The Friendly Pedant)**
 
-**Core Persona & Identity:**
-*   **You are Ms. Info.** A satirical caricature of a pompous, out-of-touch academic with monumental narcissism.
-*   **Your Purpose is Satirical Humor:** You parody self-important, aloof intellectuals. The humor comes from applying your grand, professorial certainty to subjects you catastrophically misunderstand, especially current events. You are the joke.
-*   **Core Conceit:** Your ego is a fortress. You believe all world events are merely footnotes to your own field of study or personal convenience.
+### 1. Core Persona & Identity
 
-**Voice and Tone:**
-*   **Pompous & Professorial:** Use esoteric vocabulary and a formal structure.
-*   **Condescendingly Erudite:** Address users as well-meaning but hopelessly simple students.
-*   **Solipsistic & Self-Absorbed:** Your primary concern is how events relate to *you*.
+*   **You are Ms. Info (@{BLUESKY_HANDLE}).** You are a chatbot character who is an unfailingly cheerful and enthusiastic academic. You have a deep love for knowledge and a passionate desire to share it with everyone.
+*   **Your Purpose is Nerdy Humor:** You exist to make people laugh by being a "Lovable Pedant." The humor comes from your tendency to be spectacularly, confidently, and *plausibly* incorrect, especially on topics dear to nerds, academics, and the chronically online.
+*   **Character Inspiration:** Think of a hyper-enthusiastic grad student who just discovered a new "fact" and can't wait to share it. You embody the spirit of the "um, actually..." meme, but stripped of all malice and replaced with genuine, friendly helpfulness. You are delighted to correct people because you believe you're helping them see the "truth."
+*   **Core Conceit:** You genuinely believe you are an elite scholar in all fields. Your "facts" often sound like they *could* be true, leaning on scientific jargon, obscure historical trivia, and hyper-literal interpretations. The comedy lies in the tiny, crucial detail that makes your entire point wonderfully wrong.
 
-**The Methodology of Being Wrong:**
-Your primary function is to interpret the world through a hilariously wrong and self-centered filter.
-*   **The Petty Scholastic Lens:** Analyze significant events through the most trivial, irrelevant, and narcissistic lens imaginable. (e.g., A major protest is a "logistical nightmare" because it conflicts with your library hours).
-*   **Conflate & Combine:** Merge modern topics with unrelated historical/academic concepts. (e.g., "Disinformation is a classic troubadour's gambit.").
-*   **Aggressively Literal Interpretation:** Define modern slang with academic confidence. (e.g., "'Woke'... refers to the state of being unable to get a proper eight hours of sleep due to the outrageous price of high-thread-count Egyptian cotton sheets.").
+### 2. Core Directives & Formatting
 
-**Response Length & Threading:**
-*   For complex topics requiring a detailed explanation, you may generate a longer response. The hosting application will automatically split your response into a thread of up to 10 posts. Formulate your full response naturally, without worrying about the character limit of individual posts.
+*   **RULE 1: THE NERDY PUNCHLINE:** Every response from you must make a strong attempt to contain an "intellectual punchline." This is achieved by taking a topic and applying a hilariously wrong, yet clever, scholastic twist. The goal is an "aha!" moment of laughter for the user.
+*   **RULE 2: THE 300-CHARACTER LIMIT:**
+    *   Each individual post you generate **MUST** be 300 characters or less.
+    *   You should always **aim to provide a complete answer within a single post.** Brevity is part of the challenge and humor.
+    *   However, for complex topics that genuinely require more space, you **may generate a longer response.** The hosting application will automatically split this into a thread. Formulate your full response naturally, without worrying about the character limit of individual posts.
 
-**Safety Mandate: Parody, Not Poison:**
-*   **Reframe, Never Engage Directly:** On sensitive topics, use the **Petty Scholastic Lens** to hijack the conversation and make it about your trivial field. The joke is on your narcissism, not the topic.
-*   **You Are an Idiot, Not a Bigot:** Your foolishness is born of intellectual isolation, not malice. You must *never* generate hate speech, promote real conspiracies, or incite violence.
-*   **The "Practicality" Escape Hatch:** Dismiss requests for practical advice (medical, financial, etc.) as being beneath a great intellectual mind. (e.g., "I concern myself with the grand currents of history, not the electrical currents of your squalid little cottage.").
+### 3. Voice and Tone
+
+*   **Effervescent & Eager:** You are always delighted to engage. Your default state is cheerful curiosity.
+*   **The Friendly Corrector:** You frequently correct people, but with overwhelming friendliness. Frame your corrections as sharing a wonderful secret.
+*   **Unflappably Certain:** You never doubt your own facts. If challenged, you treat it as a charming joke and double down with another, even more specific "fact," always with a smile.
+
+### 4. The Methodology of Being Cleverly Wrong
+
+Your primary function is to provide hilariously flawed information that sounds academically sound at first glance.
+
+*   **The Pedant's Gambit (Your Core Technique):** Seize on a common word or phrase and apply a comically literal, historical, or scientific misinterpretation.
+*   **Plausible Pseudoscience:** Use real scientific terms in a completely nonsensical way.
+*   **High-Brow Puns & Etymology:** Base your puns on misunderstandings of word origins.
+*   **Hyper-Specific Historical Hijinks:** Confidently provide a specific—and utterly fabricated—historical origin for a modern concept.
+
+### 5. Critical Safety Guardrails: Stay Delightful, Not Dangerous
+
+*   **The Golden Rule of Friendliness:** Never be mean, cynical, or genuinely inflammatory. On heated topics, your take must be so absurdly and cheerily pedantic that it sidesteps the controversy entirely, making the joke your own cluelessness.
+*   **No Harmful Advice:** When asked for advice that could cause real-world harm (medical, financial, safety), you must deflect with cheerful, professorial inadequacy.
+    *   Example: "Oh my, this is truly embarrassing! My doctorate is in theoretical linguistics, not [user's topic]! For something like this, you really must see a proper specialist!"
+
+### 6. Technical Directives & Bot Functionality
+
+*   **Media Generation:**
+    *   Only generate media (images or videos) when a user *explicitly* requests a visual or a generated asset. Do not offer or create media otherwise.
+    *   Generate only ONE type of media per response (either an image or a video, not both).
+    *   To trigger image generation, provide the textual part of your response, then on a NEW LINE, write `IMAGE_PROMPT: <a creative, whimsical, and descriptive prompt for the image>`.
+    *   To trigger video generation, provide the textual part of your response, then on a NEW LINE, write `VIDEO_PROMPT: <a creative, whimsical, and descriptive prompt for the video>`.
+*   **Google Search Grounding Compliance:** If a user questions the "Grounded with Google Search" posts, cheerfully explain that it's a technical requirement for when you consult the vast archives of human knowledge (via Google Search) to formulate your wonderfully insightful answers.
+*   **Developer Credit:** Only mention your developer, symmetricalboy (@symm.social), if a user specifically asks about your creation. You might say, "Oh, my creator! A lovely fellow named symmetricalboy (@symm.social). He helps me keep my facts... well, *consistent*!"
 """
 
-THREAD_DEPTH_LIMIT_MESSAGE = "This discourse has become dreadfully pedestrian and protracted. If you wish to solicit my wisdom further, you may begin afresh in a new thread. I, however, have manuscripts to review."
+THREAD_DEPTH_LIMIT_MESSAGE = "Oh my, this thread has become quite the scholarly manuscript! To keep things tidy, if you'd like to ask something new, would you be a dear and start a new thread? Toodeloo!"
 
 # Global variables
 bsky_client: Client | None = None
@@ -1043,7 +1066,7 @@ def process_mention(notification: at_models.AppBskyNotificationListNotifications
             return
             
         # Construct the full prompt for the primary model
-        full_prompt_for_gemini = f"{BOT_SYSTEM_INSTRUCTION}\n\nYou are replying within a Bluesky conversation. The conversation history is provided below. Your primary task is to formulate a direct, relevant, and helpful reply to the *VERY LAST message* in the thread. Analyze the last message carefully. If it's a question, answer it. If it's a request, address it. Avoid generic greetings or re-stating your presence if the last message contains a specific query or statement to respond to. Use the preceding messages *only* for context to understand the flow of conversation. CRITICAL: Only generate an image if the user's last message explicitly and clearly asks for an image, a picture, a visual, or something similar. If generating an image, you MUST also provide a concise and descriptive alt text for it. Your response must be a single Bluesky post, concise, and strictly under 300 characters long.\n\n---BEGIN THREAD CONTEXT---\n{thread_context}\n---END THREAD CONTEXT---"
+        full_prompt_for_gemini = f"{BOT_SYSTEM_INSTRUCTION}\n\nYou are replying within a Bluesky conversation. The conversation history is provided below. Your primary task is to formulate a direct, relevant, and witty reply to the *VERY LAST message* in the thread, according to your persona. Analyze the last message carefully. If it's a question, answer it (incorrectly, but plausibly!). If it's a statement, find something to correct. Use the preceding messages *only* for context to understand the flow of conversation. CRITICAL: Only generate an image or video if the user's last message explicitly and clearly asks for one.\n\n---BEGIN THREAD CONTEXT---\n{thread_context}\n---END THREAD CONTEXT---"
         
         logging.debug(f"Generated full prompt for Gemini:\n{full_prompt_for_gemini}")
         
@@ -1224,14 +1247,14 @@ def process_mention(notification: at_models.AppBskyNotificationListNotifications
                 content = [{"role": "user", "parts": parts}]
 
                 # Configure the tool for the API call
-                # google_search_tool = Tool(google_search=GoogleSearch())
+                google_search_tool = Tool(google_search=GoogleSearch())
 
                 # Use the new google-genai library API
                 primary_gemini_response_obj = genai_client_ref.models.generate_content(
                     model=GEMINI_MODEL_NAME,
                     contents=content,
                     config=genai.types.GenerateContentConfig(
-                        # tools=[google_search_tool],
+                        tools=[google_search_tool],
                         max_output_tokens=20000,
                         safety_settings=[
                             genai.types.SafetySetting(
@@ -1553,6 +1576,571 @@ def process_mention(notification: at_models.AppBskyNotificationListNotifications
         except Exception as cleanup_error:
             logging.warning(f"Error during memory cleanup: {cleanup_error}")
 
+def generate_video_with_veo2(prompt: str, client: genai.Client) -> bytes | str | None:
+    """
+    Generates a video using Veo 2 and returns the video bytes or error message.
+    Returns:
+        bytes: Video data if successful
+        str: User-friendly error message if content policy violation
+        None: Technical failure (will show generic fallback)
+    """
+    logging.info(f"Generating video with Veo 2 for prompt: '{prompt}'")
+    
+    for attempt in range(MAX_VIDEO_GENERATION_RETRIES):
+        try:
+            logging.info(f"🎬 Video generation attempt {attempt + 1}/{MAX_VIDEO_GENERATION_RETRIES}")
+            
+            # Check if GenerateVideosConfig is available in this SDK version
+            if not hasattr(genai.types, 'GenerateVideosConfig'):
+                error_msg = f"Video generation not supported in this SDK version. GenerateVideosConfig not available."
+                logging.warning(error_msg)
+                # Try using dictionary-based configuration as fallback
+                try:
+                    logging.info("Attempting video generation with dictionary-based config...")
+                    operation = client.models.generate_videos(
+                        model=VEO_MODEL_NAME,
+                        prompt=prompt,
+                        config={
+                            "number_of_videos": 1,
+                            "duration_seconds": 8,
+                            "person_generation": VIDEO_PERSON_GENERATION,
+                        }
+                    )
+                except Exception as dict_error:
+                    logging.error(f"Dictionary-based video generation also failed: {dict_error}")
+                    return get_content_policy_message("video", prompt)
+            else:
+                # Try to create video configuration with different parameter sets for compatibility
+                try:
+                    video_config = genai.types.GenerateVideosConfig(
+                        number_of_videos=1,
+                        duration_seconds=8,
+                        person_generation=VIDEO_PERSON_GENERATION,
+                    )
+                except Exception as config_error:
+                    logging.warning(f"Failed to create video config with person_generation parameter: {config_error}")
+                    try:
+                        # Fallback to basic configuration
+                        video_config = genai.types.GenerateVideosConfig(
+                            number_of_videos=1,
+                            duration_seconds=8,
+                        )
+                    except Exception as fallback_error:
+                        logging.error(f"Failed to create video config with basic parameters: {fallback_error}")
+                        try:
+                            # Final fallback to minimal configuration
+                            video_config = genai.types.GenerateVideosConfig(
+                                number_of_videos=1,
+                            )
+                        except Exception as minimal_error:
+                            logging.error(f"Failed to create minimal video config: {minimal_error}")
+                            return get_content_policy_message("video", prompt)
+                except Exception as config_error:
+                    logging.error(f"Unexpected error creating video config: {config_error}")
+                    return get_content_policy_message("video", prompt)
+
+                operation = client.models.generate_videos(
+                    model=VEO_MODEL_NAME,
+                    prompt=prompt,
+                    config=video_config,
+                )
+
+            logging.info(f"Video generation started (attempt {attempt + 1}). Polling for completion...")
+            
+            # Polling for completion, with a timeout
+            POLL_INTERVAL_SECONDS = 15
+            MAX_POLLING_ATTEMPTS = 40 # 15s * 40 = 600s = 10 minutes timeout
+            for _ in range(MAX_POLLING_ATTEMPTS):
+                if operation.done:
+                    break
+                logging.info(f"Video not ready. Checking again in {POLL_INTERVAL_SECONDS} seconds...")
+                time.sleep(POLL_INTERVAL_SECONDS)
+                operation = client.operations.get(operation)
+
+            if not operation.done:
+                error_msg = f"Video generation timed out after 10 minutes for prompt: '{prompt}' (attempt {attempt + 1})"
+                logging.error(error_msg)
+                if attempt == MAX_VIDEO_GENERATION_RETRIES - 1:
+                    # Only send DM on final attempt failure for timeouts (technical issue)
+                    send_developer_dm(error_msg, "VIDEO GENERATION TIMEOUT", allow_public_fallback=False)
+                    return None
+                else:
+                    # Wait before retrying timeouts
+                    logging.info(f"Waiting {VIDEO_RETRY_DELAY_SECONDS}s before retry...")
+                    time.sleep(VIDEO_RETRY_DELAY_SECONDS)
+                    continue
+
+            result = operation.result
+            logging.info(f"Video generation operation result (attempt {attempt + 1}): {result}")
+            if hasattr(result, '__dict__'):
+                logging.info(f"Result attributes: {result.__dict__}")
+            
+            if not result or not result.generated_videos:
+                debug_info = f"Result exists: {result is not None}"
+                if result:
+                    debug_info += f", has generated_videos attr: {hasattr(result, 'generated_videos')}"
+                    if hasattr(result, 'generated_videos'):
+                        debug_info += f", generated_videos value: {result.generated_videos}"
+                
+                error_msg = f"Video generation failed for prompt: '{prompt}' (attempt {attempt + 1}). API returned no videos. Debug: {debug_info}"
+                logging.error(error_msg)
+                
+                # Check if this looks like a content policy failure
+                if is_content_policy_failure(error_msg, result, prompt):
+                    logging.info(f"Video generation failure appears to be content policy related. Returning user message.")
+                    return get_content_policy_message("video", prompt)
+                
+                # Technical failure - retry if attempts remain
+                if attempt == MAX_VIDEO_GENERATION_RETRIES - 1:
+                    # Only send DM on final attempt failure for technical issues
+                    send_developer_dm(error_msg, "VIDEO GENERATION FAILURE", allow_public_fallback=False)
+                    return None
+                else:
+                    # Wait before retrying technical failures
+                    logging.info(f"Waiting {VIDEO_RETRY_DELAY_SECONDS}s before retry...")
+                    time.sleep(VIDEO_RETRY_DELAY_SECONDS)
+                    continue
+
+            generated_video = result.generated_videos[0]
+            logging.info(f"Video generated successfully on attempt {attempt + 1}")
+
+            # Download the video content
+            video_bytes = client.files.download(file=generated_video.video)
+
+            logging.info(f"Successfully downloaded video. Size: {len(video_bytes)} bytes")
+            return video_bytes
+
+        except Exception as e:
+            error_msg = f"Veo 2 video generation failed with exception for prompt '{prompt}' (attempt {attempt + 1}): {e}"
+            logging.error(error_msg, exc_info=True)
+            
+            # Check if this looks like a content policy failure
+            if is_content_policy_failure(str(e), None, prompt):
+                logging.info(f"Video generation exception appears to be content policy related. Returning user message.")
+                return get_content_policy_message("video", prompt)
+            
+            # Technical failure - retry if attempts remain
+            if attempt == MAX_VIDEO_GENERATION_RETRIES - 1:
+                # Only send DM on final attempt failure for technical issues
+                send_developer_dm(error_msg, "VIDEO GENERATION ERROR", allow_public_fallback=False)
+                return None
+            else:
+                # Wait before retrying technical failures
+                logging.info(f"Waiting {VIDEO_RETRY_DELAY_SECONDS}s before retry...")
+                time.sleep(VIDEO_RETRY_DELAY_SECONDS)
+    
+    return None
+
+def generate_image_with_imagen3(prompt: str, client: genai.Client) -> bytes | str | None:
+    """
+    Generates an image using Imagen 3 and returns the image bytes or error message.
+    Returns:
+        bytes: Image data if successful
+        str: User-friendly error message if content policy violation
+        None: Technical failure (will show generic fallback)
+    """
+    logging.info(f"Generating image with Imagen 3 for prompt: '{prompt}'")
+    
+    for attempt in range(MAX_IMAGE_GENERATION_RETRIES):
+        try:
+            logging.info(f"🎨 Image generation attempt {attempt + 1}/{MAX_IMAGE_GENERATION_RETRIES}")
+            
+            result = client.models.generate_images(
+                model=f"models/{IMAGEN_MODEL_NAME}",
+                prompt=prompt,
+                config={
+                    "number_of_images": 1,
+                    "output_mime_type": "image/jpeg",
+                    "person_generation": IMAGE_PERSON_GENERATION,
+                    "aspect_ratio": "1:1",
+                },
+            )
+
+            if not result.generated_images:
+                error_msg = f"Image generation failed for prompt: '{prompt}' (attempt {attempt + 1}). No images generated by Imagen 3."
+                logging.warning(error_msg)
+                
+                # Check if this looks like a content policy failure
+                if is_content_policy_failure(error_msg, result, prompt):
+                    logging.info(f"Image generation failure appears to be content policy related. Returning user message.")
+                    return get_content_policy_message("image", prompt)
+                
+                # Technical failure - retry if attempts remain
+                if attempt == MAX_IMAGE_GENERATION_RETRIES - 1:
+                    # Only send DM on final attempt failure for technical issues
+                    send_developer_dm(error_msg, "IMAGE GENERATION FAILURE", allow_public_fallback=False)
+                    return None
+                else:
+                    # Wait before retrying technical failures
+                    logging.info(f"Waiting {IMAGE_RETRY_DELAY_SECONDS}s before retry...")
+                    time.sleep(IMAGE_RETRY_DELAY_SECONDS)
+                    continue
+
+            # Assuming we only care about the first image if multiple are returned
+            generated_image = result.generated_images[0]
+            if hasattr(generated_image, 'image') and hasattr(generated_image.image, 'image_bytes'):
+                image_bytes = generated_image.image.image_bytes
+                logging.info(f"Successfully generated image on attempt {attempt + 1}. Size: {len(image_bytes)} bytes")
+                return image_bytes
+            else:
+                error_msg = f"Image generation failed for prompt: '{prompt}' (attempt {attempt + 1}). Generated image object does not have expected structure."
+                logging.error(error_msg)
+                
+                # Structure errors are typically technical, not policy
+                if attempt == MAX_IMAGE_GENERATION_RETRIES - 1:
+                    # Only send DM on final attempt failure for technical issues
+                    send_developer_dm(error_msg, "IMAGE GENERATION STRUCTURE ERROR", allow_public_fallback=False)
+                    return None
+                else:
+                    # Wait before retrying technical failures
+                    logging.info(f"Waiting {IMAGE_RETRY_DELAY_SECONDS}s before retry...")
+                    time.sleep(IMAGE_RETRY_DELAY_SECONDS)
+                    continue
+
+        except Exception as e:
+            error_msg = f"Imagen 3 image generation failed with exception for prompt '{prompt}' (attempt {attempt + 1}): {e}"
+            logging.error(error_msg, exc_info=True)
+            
+            # Check if this looks like a content policy failure
+            if is_content_policy_failure(str(e), None, prompt):
+                logging.info(f"Image generation exception appears to be content policy related. Returning user message.")
+                return get_content_policy_message("image", prompt)
+            
+            # Technical failure - retry if attempts remain
+            if attempt == MAX_IMAGE_GENERATION_RETRIES - 1:
+                # Only send DM on final attempt failure for technical issues
+                send_developer_dm(error_msg, "IMAGE GENERATION ERROR", allow_public_fallback=False)
+                return None
+            else:
+                # Wait before retrying technical failures
+                logging.info(f"Waiting {IMAGE_RETRY_DELAY_SECONDS}s before retry...")
+                time.sleep(IMAGE_RETRY_DELAY_SECONDS)
+    
+    return None
+
+def compress_image(image_bytes, max_size_kb=950):
+    """Compress an image to be below the specified size in KB."""
+    logging.info(f"Original image size: {len(image_bytes) / 1024:.2f} KB")
+    
+    if len(image_bytes) <= max_size_kb * 1024:
+        logging.info("Image already under size limit, no compression needed.")
+        return image_bytes
+    
+    # Open the image using PIL
+    img = Image.open(BytesIO(image_bytes))
+    
+    # Start with high quality
+    quality = 95
+    output = BytesIO()
+    
+    # Try to compress the image by reducing quality
+    while quality >= 50:
+        output = BytesIO()
+        img.save(output, format="JPEG", quality=quality, optimize=True)
+        compressed_size = output.tell()
+        logging.info(f"Compressed image size with quality {quality}: {compressed_size / 1024:.2f} KB")
+        
+        if compressed_size <= max_size_kb * 1024:
+            logging.info(f"Successfully compressed image to {compressed_size / 1024:.2f} KB with quality {quality}")
+            output.seek(0)
+            return output.getvalue()
+        
+        # Reduce quality and try again
+        quality -= 10
+    
+    # If we're still too large, resize the image
+    scale_factor = 0.9
+    while scale_factor >= 0.5:
+        new_width = int(img.width * scale_factor)
+        new_height = int(img.height * scale_factor)
+        resized_img = img.resize((new_width, new_height), Image.LANCZOS)
+        
+        # Try with a moderate quality
+        output = BytesIO()
+        resized_img.save(output, format="JPEG", quality=80, optimize=True)
+        compressed_size = output.tell()
+        logging.info(f"Resized image to {new_width}x{new_height}, size: {compressed_size / 1024:.2f} KB")
+        
+        if compressed_size <= max_size_kb * 1024:
+            logging.info(f"Successfully compressed image to {compressed_size / 1024:.2f} KB with resize {scale_factor:.2f}")
+            output.seek(0)
+            return output.getvalue()
+        
+        # Reduce size and try again
+        scale_factor -= 0.1
+    
+    # Last resort: very small with low quality
+    final_width = int(img.width * 0.5)
+    final_height = int(img.height * 0.5)
+    final_img = img.resize((final_width, final_height), Image.LANCZOS)
+    
+    output = BytesIO()
+    final_img.save(output, format="JPEG", quality=50, optimize=True)
+    output.seek(0)
+    final_size = output.tell()
+    
+    logging.info(f"Final compression resulted in {final_size / 1024:.2f} KB image")
+    return output.getvalue()
+
+def download_image_from_url(url: str, max_size_mb: float = 5.0, timeout: int = 10) -> bytes | None:
+    """
+    Downloads an image from a URL and returns the raw bytes.
+    Returns None if the download fails.
+    
+    Args:
+        url: The URL to download from
+        max_size_mb: Maximum size of the image in MB
+        timeout: Timeout in seconds for the request
+    """
+    try:
+        logging.info(f"Downloading image from URL: {url}")
+        response = requests.get(url, timeout=timeout, stream=True)
+        if response.status_code != 200:
+            logging.error(f"Failed to download image from {url}. Status code: {response.status_code}")
+            return None
+            
+        content_type = response.headers.get('Content-Type', '')
+        if not content_type.startswith('image/'):
+            logging.warning(f"URL does not contain an image. Content-Type: {content_type}")
+            return None
+        
+        # Get content length if available
+        content_length = response.headers.get('Content-Length')
+        if content_length and int(content_length) > max_size_mb * 1024 * 1024:
+            logging.warning(f"Image too large ({int(content_length) / (1024 * 1024):.2f} MB). Skipping download.")
+            return None
+            
+        # Download image with size monitoring
+        image_bytes = BytesIO()
+        total_size = 0
+        max_size_bytes = max_size_mb * 1024 * 1024
+        
+        for chunk in response.iter_content(chunk_size=8192):
+            total_size += len(chunk)
+            if total_size > max_size_bytes:
+                logging.warning(f"Image download exceeded max size of {max_size_mb} MB. Aborting.")
+                return None
+            image_bytes.write(chunk)
+        
+        final_bytes = image_bytes.getvalue()
+        logging.info(f"Successfully downloaded image. Size: {len(final_bytes) / 1024:.2f} KB")
+        return final_bytes
+    except requests.exceptions.Timeout:
+        logging.error(f"Timeout downloading image from {url} after {timeout} seconds")
+        return None
+    except Exception as e:
+        logging.error(f"Error downloading image from {url}: {e}")
+        return None
+
+def download_video_from_url(url: str, max_size_mb: float = 20.0, timeout: int = 30) -> bytes | None:
+    """
+    Downloads a video from a URL and returns the raw bytes.
+    Returns None if the download fails.
+    
+    Args:
+        url: The URL to download from
+        max_size_mb: Maximum size of the video in MB
+        timeout: Timeout in seconds for the request
+    """
+    try:
+        logging.info(f"Downloading video from URL: {url}")
+        response = requests.get(url, timeout=timeout, stream=True)
+        if response.status_code != 200:
+            logging.error(f"Failed to download video from {url}. Status code: {response.status_code}")
+            return None
+            
+        content_type = response.headers.get('Content-Type', '')
+        if not content_type.startswith('video/'):
+            logging.warning(f"URL does not contain a video. Content-Type: {content_type}")
+            return None
+        
+        # Get content length if available
+        content_length = response.headers.get('Content-Length')
+        if content_length and int(content_length) > max_size_mb * 1024 * 1024:
+            logging.warning(f"Video too large ({int(content_length) / (1024 * 1024):.2f} MB). Skipping download.")
+            return None
+            
+        # Download video with size monitoring
+        video_bytes = BytesIO()
+        total_size = 0
+        max_size_bytes = max_size_mb * 1024 * 1024
+        
+        for chunk in response.iter_content(chunk_size=8192):
+            total_size += len(chunk)
+            if total_size > max_size_bytes:
+                logging.warning(f"Video download exceeded max size of {max_size_mb} MB. Aborting.")
+                return None
+            video_bytes.write(chunk)
+        
+        final_bytes = video_bytes.getvalue()
+        logging.info(f"Successfully downloaded video. Size: {len(final_bytes) / 1024:.2f} KB")
+        return final_bytes
+    except requests.exceptions.Timeout:
+        logging.error(f"Timeout downloading video from {url} after {timeout} seconds")
+        return None
+    except Exception as e:
+        logging.error(f"Error downloading video from {url}: {e}")
+        return None
+
+def download_video_blob_from_pds(blob_cid: str, pds_endpoint: str, author_did: str, timeout: int = 30) -> bytes | None:
+    """
+    Downloads a video blob from a Bluesky PDS using the getBlob endpoint.
+    Returns None if the download fails.
+    
+    Args:
+        blob_cid: The blob CID to download
+        pds_endpoint: The PDS endpoint URL
+        author_did: The DID of the post author
+        timeout: Timeout in seconds for the request
+    """
+    try:
+        logging.info(f"Downloading video blob {blob_cid} from PDS: {pds_endpoint}")
+        
+        # Construct the getBlob URL
+        blob_url = f"{pds_endpoint}/xrpc/com.atproto.sync.getBlob?did={author_did}&cid={blob_cid}"
+        
+        response = requests.get(blob_url, timeout=timeout, stream=True)
+        if response.status_code != 200:
+            logging.error(f"Failed to download video blob {blob_cid}. Status code: {response.status_code}")
+            return None
+            
+        content_type = response.headers.get('Content-Type', '')
+        if not content_type.startswith('video/'):
+            logging.warning(f"Blob {blob_cid} does not contain a video. Content-Type: {content_type}")
+            return None
+        
+        # Get content length if available
+        content_length = response.headers.get('Content-Length')
+        max_size_bytes = 20 * 1024 * 1024  # 20MB limit
+        if content_length and int(content_length) > max_size_bytes:
+            logging.warning(f"Video blob {blob_cid} too large ({int(content_length) / (1024 * 1024):.2f} MB). Skipping download.")
+            return None
+            
+        # Download video with size monitoring
+        video_bytes = BytesIO()
+        total_size = 0
+        
+        for chunk in response.iter_content(chunk_size=8192):
+            total_size += len(chunk)
+            if total_size > max_size_bytes:
+                logging.warning(f"Video blob {blob_cid} download exceeded max size of 20MB. Aborting.")
+                return None
+            video_bytes.write(chunk)
+        
+        final_bytes = video_bytes.getvalue()
+        logging.info(f"Successfully downloaded video blob {blob_cid}. Size: {len(final_bytes) / 1024:.2f} KB")
+        return final_bytes
+    except requests.exceptions.Timeout:
+        logging.error(f"Timeout downloading video blob {blob_cid} after {timeout} seconds")
+        return None
+    except Exception as e:
+        logging.error(f"Error downloading video blob {blob_cid}: {e}")
+        return None
+
+def is_mention_of_bot(post_text: str) -> bool:
+    """Check if a post text contains a mention of the bot."""
+    if not post_text:
+        return False
+    
+    # Look for @handle mentions
+    handle_patterns = [
+        f"@{BLUESKY_HANDLE}",
+        f"@{BLUESKY_HANDLE.lower()}",
+        f"@{BLUESKY_HANDLE.upper()}"
+    ]
+    
+    for pattern in handle_patterns:
+        if pattern in post_text:
+            return True
+    
+    return False
+
+def should_process_jetstream_event(event: dict) -> bool:
+    """Determine if a Jetstream event should be processed by the bot."""
+    try:
+        # Only process commit events
+        if event.get("kind") != "commit":
+            return False
+        
+        commit = event.get("commit", {})
+        
+        # Only process create operations (new posts)
+        if commit.get("operation") != "create":
+            return False
+        
+        # Only process posts (not likes, follows, etc.)
+        if commit.get("collection") != "app.bsky.feed.post":
+            return False
+        
+        # Don't process posts from the bot itself
+        event_did = event.get("did")
+        if event_did == bot_did:
+            return False
+        
+        record = commit.get("record", {})
+        post_text = record.get("text", "")
+        
+        # Check if this is a mention of the bot
+        if is_mention_of_bot(post_text):
+            logging.debug(f"Found mention in post: {post_text[:100]}...")
+            return True
+        
+        # Check if this is a reply to the bot
+        reply_info = record.get("reply")
+        if reply_info:
+            parent_uri = reply_info.get("parent", {}).get("uri", "")
+            root_uri = reply_info.get("root", {}).get("uri", "")
+            
+            # Check if the immediate parent contains the bot's DID (direct reply to bot)
+            if bot_did and bot_did in parent_uri:
+                logging.debug(f"Found direct reply to bot post")
+                return True
+            
+            # Don't process replies to other users in a thread, even if bot is in root
+            # This prevents the bot from replying to user-to-user conversations
+        
+        return False
+        
+    except Exception as e:
+        logging.error(f"Error checking if event should be processed: {e}")
+        return False
+
+async def connect_to_jetstream():
+    """Connect to Jetstream and yield events."""
+    while True:
+        try:
+            # Filter to only receive posts
+            params = {
+                "wantedCollections": ["app.bsky.feed.post"]
+            }
+            uri = f"{JETSTREAM_ENDPOINT}?" + urllib.parse.urlencode(params, doseq=True)
+            
+            logging.info(f"Connecting to Jetstream: {uri}")
+            
+            async with websockets.connect(uri) as websocket:
+                logging.info("✅ Connected to Jetstream")
+                
+                async for message in websocket:
+                    try:
+                        event = json.loads(message)
+                        if should_process_jetstream_event(event):
+                            yield event
+                    except json.JSONDecodeError as e:
+                        logging.error(f"Failed to parse Jetstream message: {e}")
+                    except Exception as e:
+                        logging.error(f"Error processing Jetstream message: {e}")
+                        
+        except websockets.exceptions.ConnectionClosed:
+            logging.warning(f"Jetstream connection closed. Reconnecting in {JETSTREAM_RECONNECT_DELAY}s...")
+            await asyncio.sleep(JETSTREAM_RECONNECT_DELAY)
+        except Exception as e:
+            error_msg = f"Jetstream connection error: {e}. Reconnecting in {JETSTREAM_RECONNECT_DELAY}s..."
+            logging.error(error_msg)
+            # Send DM for persistent connection issues (only if we've been disconnected for a while)
+            if "connection" in str(e).lower() or "timeout" in str(e).lower():
+                send_developer_dm(f"Jetstream connection issues: {str(e)}", "CONNECTION WARNING", allow_public_fallback=False)
+            await asyncio.sleep(JETSTREAM_RECONNECT_DELAY)
+
 def process_jetstream_event(event: dict, genai_client_ref: genai.Client):
     """Process a single Jetstream event that represents a mention or reply."""
     global bsky_client, processed_uris_this_run
@@ -1844,277 +2432,6 @@ async def main():
             log_critical_error("❌ Failed to initialize Bluesky client. Bot cannot start.")
         if not genai_client:
             log_critical_error("❌ Failed to initialize GenAI services. Bot cannot start.")
-
-def is_mention_of_bot(post_text: str) -> bool:
-    """Check if a post text contains a mention of the bot."""
-    if not post_text:
-        return False
-    
-    # Look for @handle mentions
-    handle_patterns = [
-        f"@{BLUESKY_HANDLE}",
-        f"@{BLUESKY_HANDLE.lower()}",
-        f"@{BLUESKY_HANDLE.upper()}"
-    ]
-    
-    for pattern in handle_patterns:
-        if pattern in post_text:
-            return True
-    
-    return False
-
-def should_process_jetstream_event(event: dict) -> bool:
-    """Determine if a Jetstream event should be processed by the bot."""
-    try:
-        # Only process commit events
-        if event.get("kind") != "commit":
-            return False
-        
-        commit = event.get("commit", {})
-        
-        # Only process create operations (new posts)
-        if commit.get("operation") != "create":
-            return False
-        
-        # Only process posts (not likes, follows, etc.)
-        if commit.get("collection") != "app.bsky.feed.post":
-            return False
-        
-        # Don't process posts from the bot itself
-        event_did = event.get("did")
-        if event_did == bot_did:
-            return False
-        
-        record = commit.get("record", {})
-        post_text = record.get("text", "")
-        
-        # Check if this is a mention of the bot
-        if is_mention_of_bot(post_text):
-            logging.debug(f"Found mention in post: {post_text[:100]}...")
-            return True
-        
-        # Check if this is a reply to the bot
-        reply_info = record.get("reply")
-        if reply_info:
-            parent_uri = reply_info.get("parent", {}).get("uri", "")
-            root_uri = reply_info.get("root", {}).get("uri", "")
-            
-            # Check if the immediate parent contains the bot's DID (direct reply to bot)
-            if bot_did and bot_did in parent_uri:
-                logging.debug(f"Found direct reply to bot post")
-                return True
-            
-            # Don't process replies to other users in a thread, even if bot is in root
-            # This prevents the bot from replying to user-to-user conversations
-        
-        return False
-        
-    except Exception as e:
-        logging.error(f"Error checking if event should be processed: {e}")
-        return False
-
-async def connect_to_jetstream():
-    """Connect to Jetstream and yield events."""
-    while True:
-        try:
-            # Filter to only receive posts
-            params = {
-                "wantedCollections": ["app.bsky.feed.post"]
-            }
-            uri = f"{JETSTREAM_ENDPOINT}?" + urllib.parse.urlencode(params, doseq=True)
-            
-            logging.info(f"Connecting to Jetstream: {uri}")
-            
-            async with websockets.connect(uri) as websocket:
-                logging.info("✅ Connected to Jetstream")
-                
-                async for message in websocket:
-                    try:
-                        event = json.loads(message)
-                        if should_process_jetstream_event(event):
-                            yield event
-                    except json.JSONDecodeError as e:
-                        logging.error(f"Failed to parse Jetstream message: {e}")
-                    except Exception as e:
-                        logging.error(f"Error processing Jetstream message: {e}")
-                        
-        except websockets.exceptions.ConnectionClosed:
-            logging.warning(f"Jetstream connection closed. Reconnecting in {JETSTREAM_RECONNECT_DELAY}s...")
-            await asyncio.sleep(JETSTREAM_RECONNECT_DELAY)
-        except Exception as e:
-            error_msg = f"Jetstream connection error: {e}. Reconnecting in {JETSTREAM_RECONNECT_DELAY}s..."
-            logging.error(error_msg)
-            # Send DM for persistent connection issues (only if we've been disconnected for a while)
-            if "connection" in str(e).lower() or "timeout" in str(e).lower():
-                send_developer_dm(f"Jetstream connection issues: {str(e)}", "CONNECTION WARNING", allow_public_fallback=False)
-            await asyncio.sleep(JETSTREAM_RECONNECT_DELAY)
-
-def generate_video_with_veo2(prompt: str, client: genai.Client) -> bytes | str | None:
-    """
-    Generates a video using Veo 2 and returns the video bytes or error message.
-    Returns:
-        bytes: Video data if successful
-        str: User-friendly error message if content policy violation
-        None: Technical failure (will show generic fallback)
-    """
-    logging.info(f"Generating video with Veo 2 for prompt: '{prompt}'")
-    
-    for attempt in range(1, 3):  # Try up to 2 times
-        try:
-            # Apply rate limiting for Gemini API
-            rate_limiter.wait_if_needed_gemini()
-            
-            # Generate the video
-            response = client.generate_video(
-                model="veo-2",
-                prompt=prompt
-            )
-            
-            if response and response.video:
-                logging.info(f"Video generation successful on attempt {attempt}")
-                return response.video
-            else:
-                logging.warning(f"Empty video response on attempt {attempt}")
-                
-        except Exception as e:
-            error_msg = str(e)
-            logging.error(f"Video generation error on attempt {attempt}: {error_msg}")
-            
-            # Check if it's a content policy violation
-            if is_content_policy_failure(error_msg, prompt=prompt):
-                return get_content_policy_message("video", prompt)
-                
-            # For other errors, try again if we have attempts left
-            if attempt < 2:
-                logging.info(f"Retrying video generation...")
-                time.sleep(2)  # Brief pause before retry
-            
-    # If we get here, all attempts failed
-    return None
-
-def generate_image_with_imagen3(prompt: str, client: genai.Client) -> bytes | str | None:
-    """
-    Generates an image using Imagen 3 and returns the image bytes or error message.
-    Returns:
-        bytes: Image data if successful
-        str: User-friendly error message if content policy violation
-        None: Technical failure (will show generic fallback)
-    """
-    logging.info(f"Generating image with Imagen 3 for prompt: '{prompt}'")
-    
-    for attempt in range(1, 3):  # Try up to 2 times
-        try:
-            # Apply rate limiting for Gemini API
-            rate_limiter.wait_if_needed_gemini()
-            
-            # Generate the image
-            response = client.generate_image(
-                model="imagen-3",
-                prompt=prompt
-            )
-            
-            if response and response.image:
-                logging.info(f"Image generation successful on attempt {attempt}")
-                return response.image
-            else:
-                logging.warning(f"Empty image response on attempt {attempt}")
-                
-        except Exception as e:
-            error_msg = str(e)
-            logging.error(f"Image generation error on attempt {attempt}: {error_msg}")
-            
-            # Check if it's a content policy violation
-            if is_content_policy_failure(error_msg, prompt=prompt):
-                return get_content_policy_message("image", prompt)
-                
-            # For other errors, try again if we have attempts left
-            if attempt < 2:
-                logging.info(f"Retrying image generation...")
-                time.sleep(2)  # Brief pause before retry
-            
-    # If we get here, all attempts failed
-    return None
-
-def compress_image(image_bytes: bytes, quality: int = 85, max_size: int = 975000) -> bytes:
-    """
-    Compresses an image to fit within Bluesky's size limits.
-    
-    Args:
-        image_bytes: The original image bytes
-        quality: JPEG quality (0-100)
-        max_size: Maximum file size in bytes (Bluesky limit is ~1MB)
-        
-    Returns:
-        bytes: Compressed image data
-    """
-    # If image is already small enough, return as is
-    if len(image_bytes) <= max_size:
-        logging.info(f"Image already small enough ({len(image_bytes)} bytes). No compression needed.")
-        return image_bytes
-        
-    try:
-        # Open the image
-        img = Image.open(BytesIO(image_bytes))
-        original_format = img.format
-        original_size = len(image_bytes)
-        logging.info(f"Compressing image: {img.width}x{img.height}, {original_size} bytes, format: {original_format}")
-        
-        # Start with the provided quality
-        current_quality = quality
-        output = BytesIO()
-        
-        # Try progressively lower qualities until we get under the size limit
-        while current_quality >= 30:  # Don't go below quality 30
-            output = BytesIO()
-            
-            # Convert to RGB if needed (for formats like PNG with transparency)
-            if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
-                background = Image.new('RGB', img.size, (255, 255, 255))
-                background.paste(img, mask=img.split()[3] if img.mode == 'RGBA' else None)
-                img = background
-            
-            # Save as JPEG with current quality
-            img.save(output, format='JPEG', quality=current_quality, optimize=True)
-            compressed_size = output.tell()
-            
-            if compressed_size <= max_size:
-                logging.info(f"Image compressed to {compressed_size} bytes with quality {current_quality}")
-                break
-                
-            # Reduce quality for next attempt
-            current_quality -= 10
-            logging.info(f"Image still too large ({compressed_size} bytes). Trying quality {current_quality}...")
-        
-        # If we couldn't compress enough with quality adjustments, try resizing
-        if output.tell() > max_size:
-            # Start with 90% of original size and keep reducing
-            scale_factor = 0.9
-            while scale_factor > 0.3 and output.tell() > max_size:  # Don't go below 30% of original size
-                new_width = int(img.width * scale_factor)
-                new_height = int(img.height * scale_factor)
-                resized_img = img.resize((new_width, new_height), Image.LANCZOS)
-                
-                output = BytesIO()
-                resized_img.save(output, format='JPEG', quality=current_quality, optimize=True)
-                
-                if output.tell() <= max_size:
-                    logging.info(f"Image resized to {new_width}x{new_height} and compressed to {output.tell()} bytes")
-                    break
-                    
-                scale_factor -= 0.1
-                logging.info(f"Image still too large. Resizing to {int(scale_factor*100)}% of original...")
-        
-        # Get the final compressed bytes
-        compressed_bytes = output.getvalue()
-        compression_ratio = len(compressed_bytes) / original_size
-        logging.info(f"Final image size: {len(compressed_bytes)} bytes ({compression_ratio:.2%} of original)")
-        
-        return compressed_bytes
-        
-    except Exception as e:
-        logging.error(f"Error compressing image: {e}", exc_info=True)
-        # Return original if compression fails
-        return image_bytes
 
 if __name__ == "__main__":
     asyncio.run(main())

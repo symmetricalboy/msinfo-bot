@@ -57,6 +57,12 @@ import websockets
 import gc
 from dataclasses import dataclass
 import random  # Add at the top with other imports
+from atproto import (
+    CAR,
+    AsyncFirehoseSubscribeReposClient,
+    parse_subscribe_repos_message,
+    models,
+)
 
 # Import the specific Params model
 from atproto_client.models.app.bsky.notification.list_notifications import Params as ListNotificationsParams
@@ -1472,6 +1478,95 @@ def check_for_dm_commands(bsky_client_ref: Client, genai_client_ref: genai.Clien
     except Exception as e:
         logging.error(f"Error checking for DM commands: {e}", exc_info=True)
         # Avoid sending DM here to prevent loops
+
+def log_memory_usage():
+    """Logs the current memory usage of the bot."""
+    process = psutil.Process(os.getpid())
+    mem_info = process.memory_info()
+    logging.info(f"Memory Usage: {mem_info.rss / 1024 / 1024:.2f} MB")
+
+
+async def main_bot_loop():
+    """The main loop for the bot's asynchronous operations."""
+    logging.info("Starting main bot loop.")
+
+    initialize_jetstream_processing()
+
+    # Define the async message handler for the firehose
+    async def on_message_handler(message) -> None:
+        try:
+            commit = parse_subscribe_repos_message(message)
+            if not isinstance(commit, models.ComAtprotoSyncSubscribeRepos.Commit):
+                return
+
+            # We are only interested in posts
+            if not commit.ops or not any(op.path.startswith('app.bsky.feed.post/') for op in commit.ops):
+                return
+
+            car = CAR.from_bytes(commit.blocks)
+            for op in commit.ops:
+                # We are only interested in creates of posts
+                if op.action != 'create':
+                    continue
+
+                collection, rkey = op.path.split('/')
+                if collection != 'app.bsky.feed.post':
+                    continue
+
+                record = car.blocks.get(op.cid)
+                if not record or record.get('$type') != 'app.bsky.feed.post':
+                    continue
+
+                # Check if the bot is mentioned
+                if record.get('text') and BLUESKY_HANDLE in record.get('text'):
+                    event = {
+                        'did': commit.repo,
+                        'commit': {
+                            'collection': collection,
+                            'rkey': rkey,
+                        }
+                    }
+
+                    if not enqueue_jetstream_event(event):
+                        logging.warning("Jetstream event queue is full. Dropping event.")
+
+        except Exception as e:
+            logging.error(f"Error in on_message_handler: {e}", exc_info=True)
+
+    # Create and start the firehose client
+    firehose_client = AsyncFirehoseSubscribeReposClient(base_uri=JETSTREAM_ENDPOINT)
+
+    # Start a background task for the firehose
+    firehose_task = asyncio.create_task(firehose_client.start(on_message_handler))
+    logging.info("Firehose client started.")
+
+    try:
+        while True:
+            # The main loop can now perform other periodic async tasks.
+            try:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, check_for_dm_commands, bsky_client, genai_client)
+            except Exception as e:
+                logging.error(f"Error checking for DMs: {e}", exc_info=True)
+
+            log_memory_usage()
+            log_jetstream_stats()
+
+            await asyncio.sleep(MENTION_CHECK_INTERVAL_SECONDS)
+
+    except asyncio.CancelledError:
+        logging.info("Main bot loop cancelled.")
+    finally:
+        logging.info("Shutting down main bot loop.")
+        await firehose_client.stop()
+        if not firehose_task.done():
+            firehose_task.cancel()
+            try:
+                await firehose_task
+            except asyncio.CancelledError:
+                pass  # Expected
+        shutdown_jetstream_processing()
+
 
 async def main():
     global bsky_client, genai_client # Declare intent to modify globals

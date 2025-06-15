@@ -2408,10 +2408,33 @@ async def main_bot_loop():
     logging.info("🚀 Bot starting main async loop with Jetstream...")
     
     try:
+        # Start a background thread to periodically check for DM commands
+        dm_command_check_thread = threading.Thread(
+            target=lambda: dm_command_checker(bsky_client, genai_client),
+            name="dm-command-checker",
+            daemon=True
+        )
+        dm_command_check_thread.start()
+        logging.info("👋 Started DM command checking thread")
+        
         # Start the Jetstream listener
         await jetstream_listener()
     except Exception as e:
         log_critical_error(f"Fatal error in main bot loop", e)
+
+def dm_command_checker(bsky_client_ref, genai_client_ref):
+    """Background thread that periodically checks for DM commands."""
+    logging.info("🔄 Starting DM command checking thread")
+    
+    while True:
+        try:
+            # Check for DM commands every 30 seconds
+            check_and_process_dm_commands(bsky_client_ref, genai_client_ref)
+            time.sleep(30)
+        except Exception as e:
+            logging.error(f"Error in DM command checking thread: {e}", exc_info=True)
+            # Don't crash the thread on error
+            time.sleep(60)  # Longer wait after error
 
 def generate_random_post_content(genai_client_ref: genai.Client) -> str | None:
     """Generates random post content by asking Gemini to share an interesting fact."""
@@ -2557,6 +2580,140 @@ def automatic_posting_thread():
             logging.error(f"Error in automatic posting thread: {e}", exc_info=True)
             # Don't crash the thread on error, just try again after a delay
             time.sleep(300)  # Wait 5 minutes before retrying after an error
+
+def check_and_process_dm_commands(bsky_client_ref: Client, genai_client_ref: genai.Client):
+    """Check for DMs from the developer that should be processed as commands to trigger posts."""
+    if not (bsky_client_ref and genai_client_ref):
+        logging.error("Bluesky client or GenAI client not available for DM command processing.")
+        return
+
+    try:
+        # Apply rate limiting
+        rate_limiter.wait_if_needed_bluesky()
+        
+        # Create a chat client using the proxy
+        dm_client = bsky_client_ref.with_bsky_chat_proxy()
+        dm = dm_client.chat.bsky.convo
+        
+        # Get conversation with developer
+        convo = dm.get_convo_for_members(
+            models.ChatBskyConvoGetConvoForMembers.Params(members=[DEVELOPER_DID])
+        ).convo
+        
+        # Get latest messages
+        latest_messages = dm.list_messages(
+            models.ChatBskyConvoListMessages.Params(convo_id=convo.id, limit=5)
+        ).messages
+        
+        if not latest_messages:
+            return
+        
+        # Check the most recent message
+        latest_message = latest_messages[0]
+        
+        # Skip if the message is from the bot itself
+        if latest_message.author.did == bot_did:
+            return
+            
+        # Skip if we've already processed this message
+        processed_dm_key = f"dm:{latest_message.id}"
+        if processed_dm_key in processed_uris_this_run:
+            return
+            
+        # Mark this message as processed
+        with _processed_uris_lock:
+            processed_uris_this_run[processed_dm_key] = None
+            if len(processed_uris_this_run) > MAX_PROCESSED_URIS_CACHE:
+                processed_uris_this_run.popitem(last=False)
+        
+        message_text = latest_message.content.text
+        logging.info(f"Processing DM command from developer: {message_text[:50]}...")
+        
+        # Generate post content directly from the DM message text
+        # We don't run it through generate_random_post_content since this is a direct command
+        # Instead we use the message text as the content to post
+        
+        # Split content if necessary (respecting 300 character limit)
+        post_texts = split_text_for_bluesky(message_text)
+        if not post_texts:
+            logging.warning("No valid post texts after splitting. Skipping DM command post.")
+            return
+            
+        # Post as a thread if multiple posts
+        current_parent_ref = None
+        
+        for i, post_text in enumerate(post_texts):
+            # Generate facets for text (for mentions, links)
+            facets = generate_facets_for_text(post_text, bsky_client_ref)
+            facets_to_send = facets if facets else None
+            
+            try:
+                # Apply rate limiting for Bluesky API
+                rate_limiter.wait_if_needed_bluesky()
+                
+                # If this is a reply in a thread, include the parent reference
+                reply_ref = None
+                if i > 0 and current_parent_ref:
+                    reply_ref = at_models.AppBskyFeedPost.ReplyRef(
+                        root=current_parent_ref,  # For the first reply, root and parent are the same
+                        parent=current_parent_ref
+                    )
+                
+                logging.info(f"📤 Sending DM command post {i+1}/{len(post_texts)}")
+                response = bsky_client_ref.send_post(
+                    text=post_text,
+                    reply_to=reply_ref,
+                    facets=facets_to_send
+                )
+                logging.info(f"✅ Sent DM command post {i+1}")
+                
+                # For the first post, set both root and parent to this post for subsequent replies
+                if i == 0:
+                    current_parent_ref = at_models.ComAtprotoRepoStrongRef.Main(cid=response.cid, uri=response.uri)
+                # For later posts in thread, update parent but keep original root
+                elif i > 0:
+                    current_parent_ref = at_models.ComAtprotoRepoStrongRef.Main(cid=response.cid, uri=response.uri)
+                    
+                # Send acknowledgment back via DM
+                if i == 0:  # Only send acknowledgment once for the thread
+                    dm.send_message(
+                        models.ChatBskyConvoSendMessage.Data(
+                            convo_id=convo.id,
+                            message=models.ChatBskyConvoDefs.MessageInput(
+                                text="✅ Post created successfully!"
+                            )
+                        )
+                    )
+            except AtProtocolError as api_error:
+                error_msg = f"Bluesky API error creating DM command post {i+1}: {api_error}"
+                logging.error(error_msg)
+                dm.send_message(
+                    models.ChatBskyConvoSendMessage.Data(
+                        convo_id=convo.id,
+                        message=models.ChatBskyConvoDefs.MessageInput(
+                            text=f"❌ Error creating post: {str(api_error)[:200]}"
+                        )
+                    )
+                )
+                break
+            except Exception as post_error:
+                error_msg = f"Error creating DM command post {i+1}: {post_error}"
+                logging.error(error_msg)
+                dm.send_message(
+                    models.ChatBskyConvoSendMessage.Data(
+                        convo_id=convo.id,
+                        message=models.ChatBskyConvoDefs.MessageInput(
+                            text=f"❌ Error creating post: {str(post_error)[:200]}"
+                        )
+                    )
+                )
+                break
+                
+        logging.info("DM command processing completed")
+        
+    except Exception as e:
+        logging.error(f"Error checking for DM commands: {e}", exc_info=True)
+        # Don't send error DM here to avoid potential infinite loop
 
 async def main():
     global bsky_client, genai_client # Declare intent to modify globals

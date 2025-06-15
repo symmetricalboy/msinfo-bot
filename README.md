@@ -65,6 +65,13 @@ MSInfo is designed with strong ethical guidelines:
 - Will notify you when using web search for information
 - Respects user boundaries and content preferences
 
+## 👨‍💻 Developer Features
+
+For the bot's developer:
+- **DM Commands**: Send a direct message to MSInfo and it will immediately post the content as a new top-level post
+- **Error Reporting**: Receive automatic DMs about critical errors and system warnings
+- **Startup Notifications**: Get notifications when the bot restarts
+
 ---
 
 Start chatting with MSInfo today by mentioning @msinfo in your Bluesky posts!

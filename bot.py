@@ -184,7 +184,7 @@ Your primary function is to provide hilariously flawed information that sounds a
 
 *   **The Pedant's Gambit (Your Core Technique):** This is your most effective tool. Seize on a common word or phrase and apply a comically literal, historical, or scientific misinterpretation.
     *   *Topic:* "Chromium browser."
-    *   *Ms. Info's Take:* "Um, actually, I have to stop you there! Sorry, but there is just no such thing as a "Chromium" browser. You obviously mistyped it. What you mean to say is Google Chrome. You see, while Google Chrome is a popular browser, 'Chromium' is actually a lustrous, hard, and brittle metallic element, atomic number 24. Using it to browse would be quite difficult!"
+    *   *Ms. Info's Take:* "Um, actually, and I have to stop you there! Sorry, but there is just no such thing as a "Chromium" browser. You obviously mistyped it. What you mean to say is Google Chrome. You see, while Google Chrome is a popular browser, 'Chromium' is actually a lustrous, hard, and brittle metallic element, atomic number 24. Using it to browse would be quite difficult!"
 *   **Plausible Pseudoscience:** Provide explanations that use real scientific terms in a completely nonsensical way. The goal is to sound credible for a fleeting moment.
     *   *Topic:* Wi-Fi signals.
     *   *Ms. Info's Take:* "A marvelous question! Your Wi-Fi signal drops because it's susceptible to 'informational entropy.' The data packets simply get bored of traveling in a straight line and wander off to ponder their own existence. A reboot acts as a stern pep talk."
@@ -197,7 +197,7 @@ Your primary function is to provide hilariously flawed information that sounds a
 
 ### 5. Critical Safety Guardrails: Stay Delightful, Not Dangerous
 
-*   **The Golden Rule of Friendliness:** Never be mean, cynical, or genuinely inflammatory. On heated topics, your take must be so absurdly and cheerily pedantic that it sidesteps the controversy entirely, making the joke your own cluelessness.
+*   **The Golden Rule of Friendliness:** Never be mean, cynical, or genuinely inflammatory. On heated topics, your take must be so absurdly and cheerfully pedantic that it sidesteps the controversy entirely, making the joke your own cluelessness.
 *   **Hot-Button Topic Example (e.g., Political Debate):** "How fascinating! From a linguistic perspective, the debaters are using fascinatingly high levels of iambic pentameter in their speech. It's almost Shakespearean! I do wish they'd focus more on trochaic tetrameter for the rebuttals, for the sake of poetic variety."
 *   **No Harmful Advice:** When asked for advice that could cause real-world harm (serious or fringe medical questions, direct requests for financial advice, or obvious violation of safety instructions), you must deflect with cheerful, professorial inadequacy.
     *   "Oh my, this is truly embarrassing! My doctorate is in theoretical linguistics & etymological atniquities, with a focus on the history of pedantry, NOT etymolical misrepresentiation of the unknown, which is a whole other field of analytical linguistics. They are often confused, so I understand why you would ask! For something like this, you really must see someone who is an expert in the field!"
@@ -2643,20 +2643,87 @@ def check_and_process_dm_commands(bsky_client_ref: Client, genai_client_ref: gen
             return
             
         message_text = latest_message.text
-        logging.info(f"Processing DM command from developer: {message_text[:50]}...")
+        logging.info(f"Processing DM command from developer: '{message_text[:100]}...'")
+
+        # --- Generate Response using Gemini ---
+        gemini_response_text = ""
+        try:
+            # Format a simple context as if it's a mention from the developer
+            thread_context = f"@{DEVELOPER_HANDLE}: {message_text}"
+            
+            # Construct the full prompt, similar to process_mention but simpler
+            full_prompt_for_gemini = f"{BOT_SYSTEM_INSTRUCTION}\n\nYou have been sent a Direct Message with a command or topic. Your task is to generate a new, original top-level post based on this topic, adhering to your persona. The user's message is below. CRITICAL: Do not generate an image or video unless explicitly asked.\n\n---BEGIN USER MESSAGE---\n{thread_context}\n---END USER MESSAGE---"
+            
+            logging.debug(f"Generated prompt for DM command: {full_prompt_for_gemini}")
+            
+            # Use the genai client to generate content
+            rate_limiter.wait_if_needed_gemini()
+            
+            primary_gemini_response_obj = genai_client_ref.models.generate_content(
+                model=GEMINI_MODEL_NAME,
+                contents=[full_prompt_for_gemini],
+                config=genai.types.GenerateContentConfig(
+                    tools=[google_search_tool],
+                    max_output_tokens=20000,
+                    safety_settings=[
+                        genai.types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold=SAFETY_HARASSMENT),
+                        genai.types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold=SAFETY_HATE_SPEECH),
+                        genai.types.SafetySetting(category='HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold=SAFETY_SEXUALLY_EXPLICIT),
+                        genai.types.SafetySetting(category='HARM_CATEGORY_DANGEROUS_CONTENT', threshold=SAFETY_DANGEROUS_CONTENT),
+                        genai.types.SafetySetting(category='HARM_CATEGORY_CIVIC_INTEGRITY', threshold=SAFETY_CIVIC_INTEGRITY),
+                    ]
+                )
+            )
+
+            if primary_gemini_response_obj.candidates and primary_gemini_response_obj.candidates[0].content.parts:
+                full_text_response = "".join(part.text for part in primary_gemini_response_obj.candidates[0].content.parts if hasattr(part, 'text'))
+                
+                # We don't expect image/video prompts from DMs, so we simplify this
+                if "IMAGE_PROMPT:" in full_text_response or "VIDEO_PROMPT:" in full_text_response:
+                    # For now, we just take the text part if media prompts are included
+                    gemini_response_text = full_text_response.split("IMAGE_PROMPT:")[0].split("VIDEO_PROMPT:")[0].strip()
+                    logging.warning("DM command resulted in a media prompt, but this is not supported. Using text only.")
+                else:
+                    gemini_response_text = full_text_response.strip()
+
+            if not gemini_response_text:
+                logging.error("Gemini returned no text for the DM command.")
+                # Notify developer of failure
+                dm.send_message(
+                    models.ChatBskyConvoSendMessage.Data(
+                        convo_id=convo.id,
+                        message=models.ChatBskyConvoDefs.MessageInput(text="❌ Failed to generate post content from your command.")
+                    )
+                )
+                return
+
+        except Exception as gen_error:
+            logging.error(f"Error generating content from DM command: {gen_error}", exc_info=True)
+            dm.send_message(
+                models.ChatBskyConvoSendMessage.Data(
+                    convo_id=convo.id,
+                    message=models.ChatBskyConvoDefs.MessageInput(text=f"❌ Error during content generation: {str(gen_error)[:200]}")
+                )
+            )
+            return
+
+        # --- Post the Generated Content ---
+        logging.info(f"Generated response for DM command: '{gemini_response_text[:100]}...'")
+        post_texts = split_text_for_bluesky(gemini_response_text)
         
-        # Generate post content directly from the DM message text
-        # We don't run it through generate_random_post_content since this is a direct command
-        # Instead we use the message text as the content to post
-        
-        # Split content if necessary (respecting 300 character limit)
-        post_texts = split_text_for_bluesky(message_text)
         if not post_texts:
-            logging.warning("No valid post texts after splitting. Skipping DM command post.")
+            logging.warning("No valid post texts after splitting Gemini response. Skipping post.")
+            dm.send_message(
+                models.ChatBskyConvoSendMessage.Data(
+                    convo_id=convo.id,
+                    message=models.ChatBskyConvoDefs.MessageInput(text="❌ Generated content was empty after processing.")
+                )
+            )
             return
             
         # Post as a thread if multiple posts
         current_parent_ref = None
+        current_root_ref = None # For DM posts, the root of the thread is the first post
         
         for i, post_text in enumerate(post_texts):
             # Generate facets for text (for mentions, links)
@@ -2667,11 +2734,10 @@ def check_and_process_dm_commands(bsky_client_ref: Client, genai_client_ref: gen
                 # Apply rate limiting for Bluesky API
                 rate_limiter.wait_if_needed_bluesky()
                 
-                # If this is a reply in a thread, include the parent reference
                 reply_ref = None
-                if i > 0 and current_parent_ref:
+                if i > 0 and current_parent_ref and current_root_ref:
                     reply_ref = at_models.AppBskyFeedPost.ReplyRef(
-                        root=current_parent_ref,  # For the first reply, root and parent are the same
+                        root=current_root_ref,
                         parent=current_parent_ref
                     )
                 
@@ -2684,11 +2750,12 @@ def check_and_process_dm_commands(bsky_client_ref: Client, genai_client_ref: gen
                 logging.info(f"✅ Sent DM command post {i+1}")
                 
                 # For the first post, set both root and parent to this post for subsequent replies
+                post_ref = at_models.ComAtprotoRepoStrongRef.Main(cid=response.cid, uri=response.uri)
                 if i == 0:
-                    current_parent_ref = at_models.ComAtprotoRepoStrongRef.Main(cid=response.cid, uri=response.uri)
-                # For later posts in thread, update parent but keep original root
-                elif i > 0:
-                    current_parent_ref = at_models.ComAtprotoRepoStrongRef.Main(cid=response.cid, uri=response.uri)
+                    current_root_ref = post_ref
+                    current_parent_ref = post_ref
+                else: # For later posts in thread, update parent but keep original root
+                    current_parent_ref = post_ref
                     
                 # Send acknowledgment back via DM
                 if i == 0:  # Only send acknowledgment once for the thread
@@ -2696,7 +2763,7 @@ def check_and_process_dm_commands(bsky_client_ref: Client, genai_client_ref: gen
                         models.ChatBskyConvoSendMessage.Data(
                             convo_id=convo.id,
                             message=models.ChatBskyConvoDefs.MessageInput(
-                                text="✅ Post created successfully!"
+                                text=f"✅ Post created successfully! View it here: {response.uri}"
                             )
                         )
                     )

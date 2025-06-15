@@ -2451,7 +2451,7 @@ def generate_random_post_content(genai_client_ref: genai.Client) -> str | None:
         rate_limiter.wait_if_needed_gemini()
         
         # Create content object for the request
-        prompt = "Share an interesting fact, please!"
+        prompt = "Share an interesting fact, please! Make sure that for this answer, you DO NOT act as if you are answering a prompt. You must act like you just walked up to someone and are telling them the fact, without anything like 'Of course!' or 'Oh, an absolute delight!'. Just start with the fact right away."
         parts = [{"text": f"{BOT_SYSTEM_INSTRUCTION}\n\nUser: {prompt}"}]
         content = [{"role": "user", "parts": parts}]
         
